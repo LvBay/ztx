@@ -21,7 +21,7 @@ type GenCommand struct {
 	Flag flag.FlagSet
 }
 
-// typeMapping maps SQL data type to corresponding Go data type
+// mysql的数据类型和go的数据类型的映射关系
 var typeMappingMysql = map[string]string{
 	"int":                "int", // int signed
 	"integer":            "int",
@@ -62,10 +62,10 @@ var typeMappingMysql = map[string]string{
 }
 
 type GenConfig struct {
-	Conn           string // 数据库连接地址
-	Table          string // 表名
-	DescTag        bool   // 是否添加description标签
-	VirtualComment bool   // 是否添加注释
+	Conn       string // 数据库连接地址
+	Table      string // 表名
+	DescTag    bool   // 是否添加description标签
+	Annotation bool   // 是否添加注释
 }
 
 var (
@@ -73,39 +73,32 @@ var (
 	Config *GenConfig // 输出代码的配置
 )
 var connMap = map[string]string{
-	"233": "root:123456@tcp(127.0.0.1:3306)/zcm_crm?charset=utf8&loc=Asia%2FShanghai",
+	"": "root:123456@tcp(127.0.0.1:3306)/test?charset=utf8&loc=Asia%2FShanghai",
 }
 
 func init() {
-
 	Config = &GenConfig{}
-	genCmd.Flag.StringVar(&Config.Conn, "conn", "", "")            // 数据库地址
-	genCmd.Flag.StringVar(&Config.Table, "table", "", "")          // 数据库地址
-	genCmd.Flag.BoolVar(&Config.DescTag, "dtag", false, "")        // 添加orm-descrition标签
-	genCmd.Flag.BoolVar(&Config.VirtualComment, "comt", false, "") // 添加注释
+	genCmd.Flag.StringVar(&Config.Conn, "c", "", "")       // 数据库地址 connect
+	genCmd.Flag.StringVar(&Config.Table, "t", "", "")      // 表名 table
+	genCmd.Flag.BoolVar(&Config.DescTag, "d", false, "")   // 添加orm-descrition标签
+	genCmd.Flag.BoolVar(&Config.Annotation, "a", true, "") // 添加注释 Annotation
 	genCmd.Flag.Parse(os.Args[1:])
 	if v, ok := connMap[Config.Conn]; ok {
 		Config.Conn = v
 	}
 }
 
-/*
-大致思路：
-1. 连接数据库
-
-2. 查询表结构并赋值到结构体中
-
-3. 表结构体生成代码
-*/
-
-
 func GenCode() {
-
-	// db
+	if len(os.Args) <= 1 {
+		fmt.Println("try below code:")
+		fmt.Println(colors.Yellow(`ztx -table=activity`))
+		return
+	}
+	// db 连接数据库
 	conn := ConnDb(Config.Conn)
 	defer conn.Close()
 
-	// table
+	// table 查询表结构并赋值到结构体中
 	tb := GetTableObject(conn, Config.Table)
 
 	GetColumns(conn, tb)
@@ -125,6 +118,7 @@ func GenCode() {
 			ModelTPL = string(bs)
 		}
 	}
+	// 根据表结构体生成代码
 	WriteModelFiles(tables, modelPath, nil)
 }
 
@@ -144,7 +138,7 @@ type Column struct {
 	Tag  *OrmTag
 }
 
-// ForeignKey represents a foreign key column for a table
+// 外键
 type ForeignKey struct {
 	Name      string
 	RefSchema string
@@ -152,7 +146,7 @@ type ForeignKey struct {
 	RefColumn string
 }
 
-// OrmTag contains Beego ORM tag information for a column
+// beego的orm标签
 type OrmTag struct {
 	Auto        bool
 	Pk          bool
@@ -175,7 +169,7 @@ type OrmTag struct {
 	Comment     string //column comment
 }
 
-// String returns the source code string for the Table struct
+// 返回一个Table结构体的信息
 func (tb *Table) String() string {
 	rv := fmt.Sprintf("type %s struct {\n", utils.CamelCase(tb.Name))
 	for _, v := range tb.Columns {
@@ -185,13 +179,13 @@ func (tb *Table) String() string {
 	return rv
 }
 
-// String returns the source code string of a field in Table struct
-// It maps to a column in database table. e.g. Id int `orm:"column(id);auto"`
+// 返回Column结构体的信息
+// 例如:Id int `orm:"column(id);auto"`
 func (col *Column) String() string {
 	return fmt.Sprintf("%s %s %s", col.Name, col.Type, col.Tag.String(Config))
 }
 
-// String returns the ORM tag string for a column
+// 返回标签信息
 func (tag *OrmTag) String(wf *GenConfig) string {
 	var ormOptions []string
 	if tag.Column != "" {
@@ -242,15 +236,17 @@ func (tag *OrmTag) String(wf *GenConfig) string {
 	if tag.Default != "" {
 		ormOptions = append(ormOptions, fmt.Sprintf("default(%s)", tag.Default))
 	}
+
+	var s string
+	tag.Comment = strings.Replace(tag.Comment, "\r\n", " ", -1) // 去除注释中的回车
 	if wf.DescTag && tag.Comment != "" {
-		ormOptions = append(ormOptions, fmt.Sprintf("description:\"%s\"", tag.Comment))
-	}
-	if len(ormOptions) == 0 {
-		return ""
+		s = fmt.Sprintf("`orm:\"%s\"", strings.Join(ormOptions, ";"))
+		s += fmt.Sprintf(" description:\"%s\"`", tag.Comment)
+	} else {
+		s = fmt.Sprintf("`orm:\"%s\"`", strings.Join(ormOptions, ";"))
 	}
 
-	s := fmt.Sprintf("`orm:\"%s\"`", strings.Join(ormOptions, ";"))
-	if wf.VirtualComment && tag.Comment != "" {
+	if wf.Annotation && tag.Comment != "" {
 		s = fmt.Sprintf("%s // %s", s, tag.Comment) //添加双斜线注释
 	}
 	return s
@@ -396,9 +392,9 @@ func GetColumns(db *sql.DB, table *Table) {
 				if isSQLTemporalType(dataType) {
 					tag.Type = dataType
 					//check auto_now, auto_now_add
-					if columnDefault == "CURRENT_TIMESTAMP" && extra == "on update CURRENT_TIMESTAMP" {
+					if (columnDefault == "CURRENT_TIMESTAMP" && extra == "on update CURRENT_TIMESTAMP") || colName == "modify_time" {
 						tag.AutoNow = true
-					} else if columnDefault == "CURRENT_TIMESTAMP" {
+					} else if columnDefault == "CURRENT_TIMESTAMP" || colName == "create_time" {
 						tag.AutoNowAdd = true
 					}
 					// need to import time package
@@ -420,8 +416,7 @@ func GetColumns(db *sql.DB, table *Table) {
 	}
 }
 
-// 输出model
-// writeModelFiles generates model files
+// 输出model到指定文件
 func WriteModelFiles(tables []*Table, mPath string, selectedTables map[string]bool) {
 	fmt.Println("write models")
 	w := colors.NewColorWriter(os.Stdout)
@@ -487,7 +482,7 @@ func WriteModelFiles(tables []*Table, mPath string, selectedTables map[string]bo
 	}
 }
 
-// GetGoDataType maps an SQL data type to Golang data type
+// 映射为go数据类型
 func GetGoDataType(sqlType string) (string, error) {
 	if v, ok := typeMappingMysql[sqlType]; ok {
 		return v, nil
@@ -522,7 +517,7 @@ func isSQLStrangeType(t string) bool {
 	return t == "interval" || t == "uuid" || t == "json"
 }
 
-// extractColSize extracts field size: e.g. varchar(255) => 255
+// 返回标签值 例如: varchar(255) => 255
 func extractColSize(colType string) string {
 	regex := regexp.MustCompile(`^[a-z]+\(([0-9]+)\)$`)
 	size := regex.FindStringSubmatch(colType)
@@ -565,6 +560,9 @@ func init() {
 func Add{{modelName}}(m *{{modelName}}) (id int64, err error) {
 	o := orm.NewOrm()
 	id, err = o.Insert(m)
+	if err!=nil{
+		beego.Error(err)
+	}
 	return
 }
 
@@ -573,6 +571,9 @@ func Get{{modelName}}By{{modelBy}}(key {{modelPkType}}) (v *{{modelName}}, err e
 	o := orm.NewOrm()
 	v = &{{modelName}}{}
 	err = o.QueryTable(new({{modelName}})).Filter("{{modelPkName}}", key).One(v)
+	if err!=nil && err!= orm.ErrNoRows{
+		beego.Error(err)
+	}
 	return v,err
 }
 
@@ -580,6 +581,9 @@ func Get{{modelName}}By{{modelBy}}(key {{modelPkType}}) (v *{{modelName}}, err e
 func Get{{modelName}}List(key string)(list []*{{modelName}},err error){
 	o := orm.NewOrm()
 	_,err = o.QueryTable(new({{modelName}})).Filter("{{modelPkName}}", key).All(&list)
+	if err!=nil {
+		beego.Error(err)
+	}
 	return list,err
 }
 
@@ -587,6 +591,9 @@ func Get{{modelName}}List(key string)(list []*{{modelName}},err error){
 func Update{{modelName}}(m *{{modelName}}) (err error) {
 	o := orm.NewOrm()
 	_,err = o.Update(m)
+	if err!=nil{
+		beego.Error(err)
+	}
 	return
 }
 
@@ -596,6 +603,9 @@ func Delete{{modelName}}(pk {{modelPkType}}) (err error) {
 	v := {{modelName}}{{{modelBy}}: pk}
 	// ascertain id exists in the database
 	_,err = o.Delete(&v)
+	if err!=nil{
+		beego.Error(err)
+	}
 	return
 }
 `
