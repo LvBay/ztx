@@ -2,22 +2,30 @@ package main
 
 import (
 	"fmt"
-	"ztx/table"
+
+	"github.com/LvBay/ztx/table"
+
+	"github.com/beego/bee/logger/colors"
 )
 
 func main() {
-	fmt.Println(FLAG)
-	table.GenCode()
+
+	ok := table.GenCode()
+	if ok {
+		fmt.Println(colors.Green(FLAG))
+	} else {
+		fmt.Println(colors.Black(FLAG))
+	}
 }
 
 const FLAG string = `
-	＿＿＿
-　　 ／　　　▲
-／￣　 ヽ　■■
-●　　　　　■■
-ヽ＿＿＿　　■■
-　　　　）＝｜
-　　　／　｜｜
-　∩∩＿＿とﾉ
-　しし———
+		＿＿＿
+	　　 ／　　　▲
+	／￣　 ヽ　■■
+	●　　　　　■■
+	ヽ＿＿＿　　■■
+	　　　　）＝｜
+	　　　／　｜｜
+	　∩∩＿＿とﾉ
+	　しし———
 `

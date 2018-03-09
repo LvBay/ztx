@@ -16,7 +16,7 @@ import (
 
 func TestGetTableObject(t *testing.T) {
 
-	connStr := "root:123456@tcp(127.0.0.1:3306)/zcm_crm?charset=utf8&loc=Asia%2FShanghai"
+	connStr := "root:zcmlc20162016@tcp(192.168.1.233:3306)/zcm_crm?charset=utf8&loc=Asia%2FShanghai"
 	conn := ConnDb(connStr)
 	defer conn.Close()
 
@@ -62,7 +62,7 @@ func compare2(tbx *Table) error {
 func TestGetColumns(t *testing.T) {
 
 	// db
-	connStr := "root:123456@tcp(127.0.0.1:3306)/zcm_crm?charset=utf8&loc=Asia%2FShanghai"
+	connStr := "root:zcmlc20162016@tcp(192.168.1.233:3306)/zcm_crm?charset=utf8&loc=Asia%2FShanghai"
 	conn := ConnDb(connStr)
 	defer conn.Close()
 
@@ -92,7 +92,7 @@ func TestGetColumns(t *testing.T) {
 
 func TestWriteModel(t *testing.T) {
 	// db
-	connStr := "root:123456@tcp(127.0.0.1:3306)/zcm_crm?charset=utf8&loc=Asia%2FShanghai"
+	connStr := "root:zcmlc20162016@tcp(192.168.1.233:3306)/zcm_crm?charset=utf8&loc=Asia%2FShanghai"
 	conn := ConnDb(connStr)
 	defer conn.Close()
 

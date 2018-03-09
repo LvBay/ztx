@@ -2,12 +2,11 @@ package table
 
 import (
 	"database/sql"
-	"flag"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path"
-	"regexp"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -17,89 +16,38 @@ import (
 	"github.com/beego/bee/utils"
 )
 
-type GenCommand struct {
-	Flag flag.FlagSet
+type Table struct {
+	Name          string
+	Pk            string
+	PkType        string
+	Uk            []string
+	Fk            map[string]*ForeignKey
+	Columns       []*Column
+	ImportTimePkg bool
 }
 
-// mysql的数据类型和go的数据类型的映射关系
-var typeMappingMysql = map[string]string{
-	"int":                "int", // int signed
-	"integer":            "int",
-	"tinyint":            "int8",
-	"smallint":           "int16",
-	"mediumint":          "int32",
-	"bigint":             "int64",
-	"int unsigned":       "uint", // int unsigned
-	"integer unsigned":   "uint",
-	"tinyint unsigned":   "uint8",
-	"smallint unsigned":  "uint16",
-	"mediumint unsigned": "uint32",
-	"bigint unsigned":    "uint64",
-	"bit":                "uint64",
-	"bool":               "bool",   // boolean
-	"enum":               "string", // enum
-	"set":                "string", // set
-	"varchar":            "string", // string & text
-	"char":               "string",
-	"tinytext":           "string",
-	"mediumtext":         "string",
-	"text":               "string",
-	"longtext":           "string",
-	"blob":               "string", // blob
-	"tinyblob":           "string",
-	"mediumblob":         "string",
-	"longblob":           "string",
-	"date":               "time.Time", // time
-	"datetime":           "time.Time",
-	"timestamp":          "time.Time",
-	"time":               "time.Time",
-	"float":              "float32", // float & decimal
-	"double":             "float64",
-	"decimal":            "float64",
-	"binary":             "string", // binary
-	"varbinary":          "string",
-	"year":               "int16",
-}
-
-type GenConfig struct {
-	Conn       string // 数据库连接地址
-	Table      string // 表名
-	DescTag    bool   // 是否添加description标签
-	Annotation bool   // 是否添加注释
-}
-
-var (
-	genCmd = GenCommand{}
-	Config *GenConfig // 输出代码的配置
-)
-var connMap = map[string]string{
-	"": "root:123456@tcp(127.0.0.1:3306)/test?charset=utf8&loc=Asia%2FShanghai",
-}
-
-func init() {
-	Config = &GenConfig{}
-	genCmd.Flag.StringVar(&Config.Conn, "c", "", "")       // 数据库地址 connect
-	genCmd.Flag.StringVar(&Config.Table, "t", "", "")      // 表名 table
-	genCmd.Flag.BoolVar(&Config.DescTag, "d", false, "")   // 添加orm-descrition标签
-	genCmd.Flag.BoolVar(&Config.Annotation, "a", true, "") // 添加注释 Annotation
-	genCmd.Flag.Parse(os.Args[1:])
-	if v, ok := connMap[Config.Conn]; ok {
-		Config.Conn = v
+// 生成代码的主要方法,成功返回true
+func GenCode() bool {
+	args := os.Args
+	if len(args) <= 1 {
+		fmt.Println(usageTmpl)
+		return false
 	}
-}
 
-func GenCode() {
-	if len(os.Args) <= 1 {
-		fmt.Println("try below code:")
-		fmt.Println(colors.Yellow(`ztx -table=activity`))
-		return
+	if Config.Table == "" {
+		fmt.Println(colors.Yellow("请至少输入一个表名..."))
+		return false
 	}
 	// db 连接数据库
 	conn := ConnDb(Config.Conn)
 	defer conn.Close()
 
 	// table 查询表结构并赋值到结构体中
-	tb := GetTableObject(conn, Config.Table)
+	tb, err := GetTableObject(conn, Config.Table)
+	if err != nil {
+		fmt.Println(colors.Yellow(err.Error()))
+		return false
+	}
 
 	GetColumns(conn, tb)
 
@@ -120,53 +68,7 @@ func GenCode() {
 	}
 	// 根据表结构体生成代码
 	WriteModelFiles(tables, modelPath, nil)
-}
-
-type Table struct {
-	Name          string
-	Pk            string
-	PkType        string
-	Uk            []string
-	Fk            map[string]*ForeignKey
-	Columns       []*Column
-	ImportTimePkg bool
-}
-
-type Column struct {
-	Name string
-	Type string
-	Tag  *OrmTag
-}
-
-// 外键
-type ForeignKey struct {
-	Name      string
-	RefSchema string
-	RefTable  string
-	RefColumn string
-}
-
-// beego的orm标签
-type OrmTag struct {
-	Auto        bool
-	Pk          bool
-	Null        bool
-	Index       bool
-	Unique      bool
-	Column      string
-	Size        string
-	Decimals    string
-	Digits      string
-	AutoNow     bool
-	AutoNowAdd  bool
-	Type        string
-	Default     string
-	RelOne      bool
-	ReverseOne  bool
-	RelFk       bool
-	ReverseMany bool
-	RelM2M      bool
-	Comment     string //column comment
+	return true
 }
 
 // 返回一个Table结构体的信息
@@ -179,90 +81,8 @@ func (tb *Table) String() string {
 	return rv
 }
 
-// 返回Column结构体的信息
-// 例如:Id int `orm:"column(id);auto"`
-func (col *Column) String() string {
-	return fmt.Sprintf("%s %s %s", col.Name, col.Type, col.Tag.String(Config))
-}
-
-// 返回标签信息
-func (tag *OrmTag) String(wf *GenConfig) string {
-	var ormOptions []string
-	if tag.Column != "" {
-		ormOptions = append(ormOptions, fmt.Sprintf("column(%s)", tag.Column))
-	}
-	if tag.Auto {
-		ormOptions = append(ormOptions, "auto")
-	}
-	if tag.Size != "" {
-		ormOptions = append(ormOptions, fmt.Sprintf("size(%s)", tag.Size))
-	}
-	if tag.Type != "" {
-		ormOptions = append(ormOptions, fmt.Sprintf("type(%s)", tag.Type))
-	}
-	if tag.Null {
-		ormOptions = append(ormOptions, "null")
-	}
-	if tag.AutoNow {
-		ormOptions = append(ormOptions, "auto_now")
-	}
-	if tag.AutoNowAdd {
-		ormOptions = append(ormOptions, "auto_now_add")
-	}
-	if tag.Decimals != "" {
-		ormOptions = append(ormOptions, fmt.Sprintf("digits(%s);decimals(%s)", tag.Digits, tag.Decimals))
-	}
-	if tag.RelFk {
-		ormOptions = append(ormOptions, "rel(fk)")
-	}
-	if tag.RelOne {
-		ormOptions = append(ormOptions, "rel(one)")
-	}
-	if tag.ReverseOne {
-		ormOptions = append(ormOptions, "reverse(one)")
-	}
-	if tag.ReverseMany {
-		ormOptions = append(ormOptions, "reverse(many)")
-	}
-	if tag.RelM2M {
-		ormOptions = append(ormOptions, "rel(m2m)")
-	}
-	if tag.Pk {
-		ormOptions = append(ormOptions, "pk")
-	}
-	if tag.Unique {
-		ormOptions = append(ormOptions, "unique")
-	}
-	if tag.Default != "" {
-		ormOptions = append(ormOptions, fmt.Sprintf("default(%s)", tag.Default))
-	}
-
-	var s string
-	tag.Comment = strings.Replace(tag.Comment, "\r\n", " ", -1) // 去除注释中的回车
-	if wf.DescTag && tag.Comment != "" {
-		s = fmt.Sprintf("`orm:\"%s\"", strings.Join(ormOptions, ";"))
-		s += fmt.Sprintf(" description:\"%s\"`", tag.Comment)
-	} else {
-		s = fmt.Sprintf("`orm:\"%s\"`", strings.Join(ormOptions, ";"))
-	}
-
-	if wf.Annotation && tag.Comment != "" {
-		s = fmt.Sprintf("%s // %s", s, tag.Comment) //添加双斜线注释
-	}
-	return s
-}
-
-func ConnDb(conn string) *sql.DB {
-	db, err := sql.Open("mysql", conn)
-	// 即使conn连接失败,err还是为空
-	if err != nil {
-		beeLogger.Log.Fatalf("Could not connect to mysql database using '%s': %s", conn, err)
-	}
-	return db
-}
-
 // 获取表名,主键
-func GetTableObject(db *sql.DB, tbname string) *Table {
+func GetTableObject(db *sql.DB, tbname string) (*Table, error) {
 	table := new(Table)
 	table.Name = tbname
 	table.Fk = make(map[string]*ForeignKey)
@@ -279,6 +99,11 @@ func GetTableObject(db *sql.DB, tbname string) *Table {
 		table.Name, table.Name) //  u.position_in_unique_constraint,
 	if err != nil {
 		beeLogger.Log.Fatal("Could not query INFORMATION_SCHEMA for PK/UK/FK information")
+		return nil, err
+	}
+
+	if !rows.Next() {
+		return nil, errors.New("Could not find " + tbname)
 	}
 
 	for rows.Next() {
@@ -309,7 +134,7 @@ func GetTableObject(db *sql.DB, tbname string) *Table {
 			table.Fk[columnName] = fk
 		}
 	}
-	return table
+	return table, nil
 }
 
 // 获取各个字段信息
@@ -481,132 +306,3 @@ func WriteModelFiles(tables []*Table, mPath string, selectedTables map[string]bo
 		utils.FormatSourceCode(fpath)
 	}
 }
-
-// 映射为go数据类型
-func GetGoDataType(sqlType string) (string, error) {
-	if v, ok := typeMappingMysql[sqlType]; ok {
-		return v, nil
-	}
-	return "", fmt.Errorf("data type '%s' not found", sqlType)
-}
-
-func isSQLTemporalType(t string) bool {
-	return t == "date" || t == "datetime" || t == "timestamp" || t == "time"
-}
-
-func isSQLStringType(t string) bool {
-	return t == "char" || t == "varchar"
-}
-
-func isSQLSignedIntType(t string) bool {
-	return t == "int" || t == "tinyint" || t == "smallint" || t == "mediumint" || t == "bigint"
-}
-
-func isSQLDecimal(t string) bool {
-	return t == "decimal"
-}
-
-func isSQLBinaryType(t string) bool {
-	return t == "binary" || t == "varbinary"
-}
-
-func isSQLBitType(t string) bool {
-	return t == "bit"
-}
-func isSQLStrangeType(t string) bool {
-	return t == "interval" || t == "uuid" || t == "json"
-}
-
-// 返回标签值 例如: varchar(255) => 255
-func extractColSize(colType string) string {
-	regex := regexp.MustCompile(`^[a-z]+\(([0-9]+)\)$`)
-	size := regex.FindStringSubmatch(colType)
-	return size[1]
-}
-
-func extractIntSignness(colType string) string {
-	regex := regexp.MustCompile(`(int|smallint|mediumint|bigint)\([0-9]+\)(.*)`)
-	signRegex := regex.FindStringSubmatch(colType)
-	return strings.Trim(signRegex[2], " ")
-}
-
-func extractDecimal(colType string) (digits string, decimals string) {
-	decimalRegex := regexp.MustCompile(`decimal\(([0-9]+),([0-9]+)\)`)
-	decimal := decimalRegex.FindStringSubmatch(colType)
-	digits, decimals = decimal[1], decimal[2]
-	return
-}
-
-var (
-	StructModelTPL = `package models
-{{importTimePkg}}
-{{modelStruct}}
-`
-
-	ModelTPL = `package models
-
-import (
-	{{timePkg}}
-	"github.com/astaxie/beego/orm"
-)
-
-{{modelStruct}}
-
-func init() {
-	orm.RegisterModel(new({{modelName}}))
-}
-
-// Add {{modelName}}
-func Add{{modelName}}(m *{{modelName}}) (id int64, err error) {
-	o := orm.NewOrm()
-	id, err = o.Insert(m)
-	if err!=nil{
-		beego.Error(err)
-	}
-	return
-}
-
-// Get {{modelName}} by {{modelPkName}}
-func Get{{modelName}}By{{modelBy}}(key {{modelPkType}}) (v *{{modelName}}, err error) {
-	o := orm.NewOrm()
-	v = &{{modelName}}{}
-	err = o.QueryTable(new({{modelName}})).Filter("{{modelPkName}}", key).One(v)
-	if err!=nil && err!= orm.ErrNoRows{
-		beego.Error(err)
-	}
-	return v,err
-}
-
-// Get {{modelName}} list by {{modelPkName}}
-func Get{{modelName}}List(key string)(list []*{{modelName}},err error){
-	o := orm.NewOrm()
-	_,err = o.QueryTable(new({{modelName}})).Filter("{{modelPkName}}", key).All(&list)
-	if err!=nil {
-		beego.Error(err)
-	}
-	return list,err
-}
-
-// Update {{modelName}}
-func Update{{modelName}}(m *{{modelName}}) (err error) {
-	o := orm.NewOrm()
-	_,err = o.Update(m)
-	if err!=nil{
-		beego.Error(err)
-	}
-	return
-}
-
-// Delete {{modelName}}
-func Delete{{modelName}}(pk {{modelPkType}}) (err error) {
-	o := orm.NewOrm()
-	v := {{modelName}}{{{modelBy}}: pk}
-	// ascertain id exists in the database
-	_,err = o.Delete(&v)
-	if err!=nil{
-		beego.Error(err)
-	}
-	return
-}
-`
-)
