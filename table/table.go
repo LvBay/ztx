@@ -2,7 +2,6 @@ package table
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -100,10 +99,6 @@ func GetTableObject(db *sql.DB, tbname string) (*Table, error) {
 	if err != nil {
 		beeLogger.Log.Fatal("Could not query INFORMATION_SCHEMA for PK/UK/FK information")
 		return nil, err
-	}
-
-	if !rows.Next() {
-		return nil, errors.New("Could not find " + tbname)
 	}
 
 	for rows.Next() {
